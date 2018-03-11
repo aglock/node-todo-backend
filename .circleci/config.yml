@@ -72,6 +72,110 @@ jobs:
             kubectl  --namespace=fast-todo-backend logs -f po/todo-backend-${version}
             if ! kubectl  --namespace=fast-todo-backend get po/todo-backend-${version} | grep Completed >/dev/null; then echo failed; retvalue=1; else retvalue=0; fi
             exit $retvalue
+  slow_test1:
+    docker:
+      - image: sennerholm/google-cloud-sdk-terraform
+
+    steps:   
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Authenticate to GCP
+          command: source scripts/common.sh; gcpAuthenticate ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} ${GOOGLE_COMPUTE_ZONE}
+     
+      - run: 
+         name: Checking environment
+         command: env
+      - run: 
+         name: Checking dirs
+         command: ls -l . scripts
+      - run:
+          name: Clone and update Terraform infrastructure repo
+          command: bash -x scripts/clone-and-update-infrastructure.sh ${CIRCLE_SHA1} `cat circleci-build-number.txt` terraform-infrastructure-live/gce_account/europe-west1/slow/todo-backend-1
+      - run:
+          name: Create terraform config
+          command: source scripts/common.sh; createTerraformConf ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} 
+          
+      - run:
+          name: Deploy application and test pods from scratch
+          command: |
+            version=`cat circleci-build-number.txt`
+            cd terraform-infrastructure-live/gce_account/europe-west1//slow/todo-backend-1
+            terragrunt destroy -force
+            terragrunt apply -auto-approve
+            kubectl  --namespace=slow-todo-backend1 logs -f po/todo-backend-${version}
+            if ! kubectl  --namespace=slow-todo-backend1 get po/todo-backend-${version} | grep Completed >/dev/null; then echo failed; retvalue=1; else retvalue=0; fi
+            terragrunt destroy -force
+            exit $retvalue
+  deploy_stage:
+    docker:
+      - image: sennerholm/google-cloud-sdk-terraform
+
+    steps:   
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Authenticate to GCP
+          command: source scripts/common.sh; gcpAuthenticate ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} ${GOOGLE_COMPUTE_ZONE}
+     
+      - run: 
+         name: Checking environment
+         command: env
+      - run: 
+         name: Checking dirs
+         command: ls -l . scripts
+      - run:
+          name: Clone and update Terraform infrastructure repo
+          command: bash -x scripts/clone-and-update-infrastructure.sh ${CIRCLE_SHA1} `cat circleci-build-number.txt` terraform-infrastructure-live/gce_account/europe-west1/stage/todo-backend
+      - run:
+          name: Create terraform config
+          command: source scripts/common.sh; createTerraformConf ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} 
+          
+      - run:
+          name: Deploy application for manual tests
+          command: |
+            version=`cat circleci-build-number.txt`
+            cd terraform-infrastructure-live/gce_account/europe-west1/stage/todo-backend
+            terragrunt apply -auto-approve
+            echo "Run your tests at"
+            terragrunt  output url 2>/dev/null
+
+   
+  deploy_production:
+    docker:
+      - image: sennerholm/google-cloud-sdk-terraform
+
+    steps:   
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Authenticate to GCP
+          command: source scripts/common.sh; gcpAuthenticate ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} ${GOOGLE_COMPUTE_ZONE}
+     
+      - run: 
+         name: Checking environment
+         command: env
+      - run: 
+         name: Checking dirs
+         command: ls -l . scripts
+      - run:
+          name: Clone and update Terraform infrastructure repo
+          command: bash -x scripts/clone-and-update-infrastructure.sh ${CIRCLE_SHA1} `cat circleci-build-number.txt` terraform-infrastructure-live/gce_account/europe-west1/production/todo-backend
+      - run:
+          name: Create terraform config
+          command: source scripts/common.sh; createTerraformConf ${GOOGLE_AUTH} ${GOOGLE_PROJECT_ID} 
+          
+      - run:
+          name: Deploy application 
+          command: |
+            version=`cat circleci-build-number.txt`
+            cd terraform-infrastructure-live/gce_account/europe-west1/production/todo-backend
+            terragrunt apply -auto-approve
+            echo "The service is aviable at"
+            terragrunt  output url 2>/dev/null
 
 workflows:
   version: 2
@@ -83,4 +187,26 @@ workflows:
           context: org-global      
           requires:
             - build
-
+      - slow_test1:
+          context: org-global      
+          requires:
+            - fast_test
+      - deploy_stage:
+          context: org-global      
+          requires:
+            - fast_test
+      - approve_production:
+          type: approval
+          filters:
+            branches:
+              only: master
+          requires:
+              - deploy_stage
+              - slow_test1
+      - deploy_production:
+          context: org-global            
+          filters:
+            branches:
+              only: master
+          requires:
+            - approve_production
