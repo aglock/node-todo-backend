@@ -33,9 +33,11 @@ resource "google_service_account" "todo_account" {
 resource "google_project_iam_member" "datastore_user" {
    role    = "roles/datastore.user"
    member  = "serviceAccount:${google_service_account.todo_account.email}"
-   provisioner "local-exec" {
-       command = "echo sleep 90s to propagate all permissions; sleep 90"
-  }
+   # Check if https://github.com/terraform-providers/terraform-provider-google/pull/1197 
+   # fix our timing issues
+   #provisioner "local-exec" {
+   #    command = "echo sleep 90s to propagate all permissions; sleep 90"
+   # }
 }
 
 
